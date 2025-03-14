@@ -134,14 +134,6 @@ def load_fmri_data(dataset, parcel_type, phenotypes_to_include, target_phenotype
         if dataset == "UKB" and fmri_data.shape[0] > 363:
             start_idx = (fmri_data.shape[0] - 363) // 2  # Calculate starting index for truncation
             fmri_data = fmri_data[start_idx:start_idx + 363]
-            
-        # Compute mean and standard deviation for each brain region
-        fmri_mean = fmri_data.mean(axis=0)
-        fmri_std = fmri_data.std(axis=0)
-        # Avoid division by zero: replace zero std with a small value
-        fmri_std[fmri_std == 0] = 1e-8
-        # Normalize brain region features
-        fmri_data = (fmri_data - fmri_mean) / fmri_std
         fmri_tensor = torch.tensor(fmri_data, dtype=torch.float32)
 
         # Stack phenotype features as additional columns across all time points
@@ -207,6 +199,20 @@ def split_and_prepare_dataloaders(X, y, batch_size, sequence_length, device, bin
         temp_X, temp_y, test_size=0.5, stratify=temp_y if stratify else None, random_state=42
     )
 
+    # Concatenate all subjects' data along the time dimension for normalization
+    train_X_concat = torch.cat(train_X, dim=0)  # shape: (total_time_points_all_subjects, num_features)
+    # Compute mean/std from training set ONLY
+    train_X_mean = train_X_concat.mean(dim=0, keepdim=True)
+    train_X_std = train_X_concat.std(dim=0, keepdim=True)
+    train_X_std[train_X_std == 0] = 1e-8  # Avoid division by zero
+
+    def normalize_subjects(subjects, mean, std):
+        return [(subj - mean) / std for subj in subjects]
+        
+    train_X = normalize_subjects(train_X, train_X_mean, train_X_std)
+    val_X = normalize_subjects(val_X, train_X_mean, train_X_std)
+    test_X = normalize_subjects(test_X, train_X_mean, train_X_std)
+    
     # Create fixed-length sequences for each split
     train_sequences, train_sequence_labels = create_sequences(train_X, train_y)
     val_sequences, val_sequence_labels = create_sequences(val_X, val_y)
